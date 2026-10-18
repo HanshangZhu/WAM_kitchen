@@ -357,7 +357,7 @@ class Solver:
         if self.handle_plan is not None and len(self.handle_plan[2]) == 10:
             # back from the handle's approach to the ready pose along a line, IK seeded step by
             # step (the same orientation throughout): the ready arm on the grasp's own branch
-            P0 = self.handle_pose(0, back=0.10)
+            P0 = self.handle_pose(self.handle_q0, back=0.10)
             n = int(np.ceil(np.linalg.norm(P.p - P0.p) / 0.01))
             qs = arm.path([sapien.Pose(P0.p + (P.p - P0.p) * k / n, P.q) for k in range(1, n + 1)],
                           self.handle_plan[2][-1])
@@ -376,11 +376,14 @@ class Solver:
         the closest to the arm). Sets self.handle_plan = (q_grasp, arc, approach)."""
         arm, handle_pose = self.arm, self.handle_pose
         q_open = np.deg2rad(open_deg)
+        # from the door's angle now: shut, or left part-open (a start in the middle of the task)
+        q0 = float(self.u.door_angle()[0])
+        self.handle_q0 = q0 = 0.0 if q0 < np.deg2rad(2) else q0
         best = None
         for fl in self.flips():
             self.flip = fl
-            arc = [handle_pose(q) for q in np.arange(np.deg2rad(1), q_open + 1e-6, np.deg2rad(1))]
-            for qc in arm.candidates(handle_pose(0)):
+            arc = [handle_pose(q) for q in np.arange(q0 + np.deg2rad(1), q_open + 1e-6, np.deg2rad(1))]
+            for qc in arm.candidates(handle_pose(q0)):
                 qs = arm.path(arc, qc)
                 m = arm.margin([qc] + qs)
                 key = (len(qs), m > 0.05, -np.abs(qc - arm.q_cmd).sum()) if self.try_flip else (len(qs), m)
@@ -390,7 +393,7 @@ class Solver:
         print(f"handle grasp: arc followed to {len(best[2])} deg, joint-limit margin {best[4]:.2f} rad, "
               f"flip {self.flip}", flush=True)
         q_grasp, arc_qs = best[1], best[2]
-        approach = arm.path([handle_pose(0, back=b) for b in np.arange(0.01, 0.1001, 0.01)], q_grasp)
+        approach = arm.path([handle_pose(q0, back=b) for b in np.arange(0.01, 0.1001, 0.01)], q_grasp)
         self.handle_plan = (q_grasp, arc_qs, approach)
         return len(approach) == 10
 
@@ -404,6 +407,7 @@ class Solver:
         q_grasp, arc_qs, approach = self.handle_plan
         self.handle_plan = None
         arm.gripper(HALF_OPEN)
+        miss_back = miss_back if self.handle_q0 == 0 else 0.0     # the missed grasp only on a shut door
         ok = step("reach handle", len(approach) == 10 and arm.move_joint(approach[-1]))
         if ok and miss_back > 0:
             k = int(round(miss_back / 0.01)) - 1                 # approach[k]: the pose miss_back off the bar
@@ -440,7 +444,7 @@ class Solver:
     # nothing is in the way (above the microwave and the door, or out in front).
 
     def pick_and_place(self, place, from_tcp=False, hold=False, human=None, human_smooth=False, human_carry_only=False,
-                       carry_z=0.25):
+                       carry_z=0.25, short_y=None):
         """2+3. Pick the pot and put it in the cavity, planned as ONE pose sequence --
         approach, grasp, lift, across high, down in front of the opening, in, down -- so the
         whole carry is a single continuous joint path: any joint-space move while holding the
@@ -448,6 +452,8 @@ class Solver:
         out drags it along). from_tcp: the approach starts where the hand is now (it is
         already in front of the pot, on the approach line) instead of 10 cm in front of it.
         hold: the hand has already closed on the pot; carry it from where it is.
+        short_y: a failed place -- the pot is put down on the counter at short_y (mw, in front of the
+        opening) instead of in the cavity; picking it up again from there is the next call's job.
         human: sim/human_paths.load(take) -- follow the demonstrator's hand where it was seen:
         its approach (moved with the pot, kept in front of and above it) and its carry path
         (warped from the take's pick/place to this episode's), with this solver's hand
@@ -464,6 +470,8 @@ class Solver:
         app, clo = np.array([0, 1.0, 0]), np.array([1.0, 0, 0])
         x, y = place
         z_place = der["turntable_top_z"] + POT_GRASP_Z + 0.001   # 1 mm drop: no tilt on release
+        if short_y is not None:
+            y, z_place = short_y, POT_GRASP_Z + 0.006          # let go 5 mm up: no push into the counter
         g = lambda xyz: self.grasp_pose(xyz, app, clo)
         if hold:
             c = M.world_to_mw(arm.tcp().p)
@@ -651,6 +659,14 @@ def main():
     ap.add_argument("--j5-max", type=float, default=0.0, help="--smooth: also keep |j5| below this (deg); 0: off "
                     "(the handle grasp needs j5 near its limit)")
     ap.add_argument("--miss-back", type=float, default=0.0, help="> 0: a missed handle grasp (this far short of the bar, m) and a retry")
+    ap.add_argument("--start", choices=["closed", "half", "open", "inside", "lip"], default="closed",
+                    help="the task's state at the start: door shut (the whole task); door part-open (re-open it, "
+                    "then the rest); door open with the pot on the counter / in the cavity / just in front of the "
+                    "opening (--pot); the solver does what is left")
+    ap.add_argument("--door-deg", type=float, default=90.0, help="--start other than closed: the door's start angle")
+    ap.add_argument("--place-short", type=float, default=0.0, help="< 0: a failed place first -- the pot put down "
+                    "on the counter at this y (mw, e.g. -0.17), then picked up again and put in. Not usable yet: the pot is "
+                    "left tilted on the counter and the second grasp does not lift it")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     if a.take:
@@ -664,22 +680,36 @@ def main():
     yaw = np.pi / 2                    # long side along +y_mw: grasped from the front, carried in square
     # --no-video: no renderer at all (physics only; also runs where there is no Vulkan)
     render = {} if a.no_video else dict(render_mode="rgb_array")
+    if a.start == "inside":                     # the pot on the turntable
+        a.pot_z = json.load(open(M.MW_PARAMS))["derived"]["turntable_top_z"]
+    door_q0 = 0.0 if a.start == "closed" else np.deg2rad(a.door_deg)
     env = gym.make("MicrowavePot-v0", obs_mode="state", control_mode="pd_joint_pos", pot_mw=(*pot_xy, yaw),
-                   pot_z=a.pot_z, sim_backend="cpu", max_episode_steps=4000,
+                   pot_z=a.pot_z, door_q0=door_q0, sim_backend="cpu", max_episode_steps=4000,
                    **(render or dict(render_backend="none")))
     env = RecordEpisode(env, a.out, save_video=not a.no_video, save_trajectory=True, trajectory_name="solve",
                         video_fps=30, max_steps_per_video=4000)
     obs0, _ = env.reset(seed=a.seed)
-    arm = Arm(env, obs=obs0, noise=a.dart_noise, rng_seed=a.seed + int(1e4 * (a.pot[0] + a.pot[1])), speed=a.speed,
+    arm = Arm(env, obs=obs0, noise=a.dart_noise, rng_seed=(a.seed + int(1e4 * (a.pot[0] + a.pot[1]))) % 2**32, speed=a.speed,
               j5_max=np.deg2rad(a.j5_max) if a.smooth and a.j5_max else None)
     arm.closest_first = a.smooth
     S = Solver(env, arm)
     S.try_flip = a.smooth
-    if a.smooth:
-        S.plan_handle(a.open_deg)
-    ok = S.ready()
-    ok = S.open_door(a.open_deg, miss_back=a.miss_back) and ok
-    if ok:
+    if a.start in ("closed", "half"):
+        if a.smooth:
+            S.plan_handle(a.open_deg)
+        if a.start == "closed":
+            ok = S.ready()
+        else:                                   # the ready pose is where a part-open door is: go high instead
+            q_tuck = S.tuck_q()
+            ok = S.step("tuck", q_tuck is not None and arm.move_joint(q_tuck, step=0.02))
+        ok = S.open_door(a.open_deg, miss_back=a.miss_back) and ok
+    else:                                       # the door is open already: out of the way, then the rest
+        q_tuck = S.tuck_q()
+        ok = S.step("tuck", q_tuck is not None and arm.move_joint(q_tuck, step=0.02))
+    if ok and a.place_short < 0 and a.start != "inside":
+        ok = S.pick_and_place(a.place, carry_z=a.carry_z, short_y=a.place_short)
+        ok = S.step("put down short of the opening", ok and not bool(S.u.evaluate()["pot_inside"][0]))
+    if ok and a.start != "inside":
         ok = S.pick_and_place(a.place, human=HP.load(a.human) if a.human else None, human_smooth=a.human_smooth,
                               human_carry_only=a.human_carry_only, carry_z=a.carry_z)
     if ok:
@@ -697,6 +727,7 @@ def main():
     res["miss_back"] = a.miss_back
     res["joint_jumps"] = arm.jumps
     res["smooth"] = bool(a.smooth)
+    res["start"], res["door_deg0"], res["place_short"] = a.start, float(np.degrees(door_q0)), a.place_short
     json.dump(res, open(os.path.join(a.out, "result.json"), "w"), indent=1)
     # the (observation, clean planned action) pairs; with --dart-noise these differ from
     # what was executed, which is the point

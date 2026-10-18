@@ -42,6 +42,9 @@ def main():
     ap.add_argument("--smooth", action="store_true", help="sim/solve_microwave.py --smooth (fewer wrist flips)")
     ap.add_argument("--miss-p", type=float, default=0.0, help="probability per run of a missed handle grasp + retry")
     ap.add_argument("--miss-back", type=float, default=0.04, help="how far short of the bar the missed grasp closes (m)")
+    ap.add_argument("--starts", default="closed", help="comma-separated start states (sim/solve_microwave.py --start), "
+                    "one drawn per run: closed, half (door 25-65 deg), open / inside / lip (door 75-100 deg; pot on "
+                    "the counter / at the place target in the cavity / 15-20 cm in front of the opening)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
@@ -53,6 +56,16 @@ def main():
     rng = np.random.default_rng(a.seed)
     cfgs = [dict(run=i, pot=rng.uniform(lo_p, hi_p).round(4).tolist(), place=rng.uniform(lo_q, hi_q).round(4).tolist())
             for i in range(a.n)]
+    starts = a.starts.split(",")
+    for c in cfgs:                                  # its own stream: the configurations above are as before
+        r = np.random.default_rng(a.seed * 100003 + 7919 + c["run"])
+        c["start"] = starts[r.integers(len(starts))]
+        c["door0"] = 0.0 if c["start"] == "closed" else round(float(r.uniform(25, 65) if c["start"] == "half"
+                                                                            else r.uniform(75, 100)), 1)
+        if c["start"] == "inside":
+            c["pot"] = list(c["place"])
+        elif c["start"] == "lip":
+            c["pot"] = [c["place"][0], round(float(r.uniform(-0.20, -0.15)), 4)]
     print(f"pick region x {lo_p[0]:.3f}..{hi_p[0]:.3f}, y {lo_p[1]:.3f}..{hi_p[1]:.3f}; "
           f"place region x {lo_q[0]:.3f}..{hi_q[0]:.3f}, y {lo_q[1]:.3f}..{hi_q[1]:.3f}", flush=True)
 
@@ -67,6 +80,8 @@ def main():
             cmd.append("--no-video")
         if a.speed != 1.0:
             cmd += ["--speed", str(a.speed)]
+        if c["start"] != "closed":
+            cmd += ["--start", c["start"], "--door-deg", str(c["door0"])]
         if a.smooth:
             cmd.append("--smooth")
         if a.miss_p > 0 and np.random.default_rng(a.seed * 100003 + c["run"]).random() < a.miss_p:

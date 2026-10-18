@@ -73,9 +73,10 @@ class MicrowavePotEnv(BaseEnv):
     agent: Panda
 
     def __init__(self, *args, robot_uids="panda", pot_mw=(0.50, -0.25, np.pi / 2), pot_region=None,
-                 pot_z=0.0, views=False, backdrop=None, dr_seed=None, dr_style="procedural", **kwargs):
+                 pot_z=0.0, door_q0=0.0, views=False, backdrop=None, dr_seed=None, dr_style="procedural", **kwargs):
         self.pot_mw = np.asarray(pot_mw, float)          # x, y, yaw of the pot in mw
         self.pot_z = float(pot_z)                         # start height above the counter (0: on it)
+        self.door_q0 = float(door_q0)                     # start angle of the door (rad; 0: shut)
         # backdrop: a visual-only mesh in the mw frame (recon/kitchen_backdrop.py -- the scanned
         # kitchen); the cameras then see it instead of the grey ground plane (physics unchanged)
         self.backdrop = backdrop
@@ -160,7 +161,7 @@ class MicrowavePotEnv(BaseEnv):
             b = len(env_idx)
             self.agent.robot.set_qpos(torch.tensor(INIT_QPOS, dtype=torch.float32).repeat(b, 1))
             self.agent.robot.set_pose(sapien.Pose([0, 0, 0]))
-            self.mw.set_qpos(torch.zeros((b, 1)))
+            self.mw.set_qpos(torch.full((b, 1), self.door_q0))
             x, y, yaw = self.pot_mw
             q_w = yaw_quat(yaw - np.pi / 2)                  # yaw in mw -> yaw in world
             xyz = np.tile([x, y, 0.001 + self.pot_z], (b, 1))
