@@ -36,16 +36,26 @@ sys.path.insert(0, ROOT)
 from wam import _lingbot as LB  # noqa: E402
 from utils import FlowMatchScheduler, data_seq_to_patch, get_mesh_id, sample_timestep_id  # noqa: E402
 
-N_ACT = 8                       # used action channels (slots 0..7 of 30)
+N_ACT = 8                       # joint targets 7 + gripper, as encode_va.py stores them
 ACTION_DIM, ACT_PER_FRAME = 30, 8
 SNR_SHIFT, ACTION_SNR_SHIFT = 5.0, 1.0      # va_demo_cfg (the base checkpoint's demo config)
 PATCH = (1, 2, 2)
 
 
 # ---- data ----------------------------------------------------------------------------------
+def clip_actions(f, d, layout):
+    """(F, 8 steps, C) raw, in the layout's used-channel order (LB.LAYOUTS)"""
+    a = d["actions"].float()
+    if layout == "joints":
+        return a
+    ee = torch.load(f[:-3] + ".ee.pt", weights_only=False).float()       # wam/ee_actions.py
+    return torch.cat([ee, a[..., :7], a[..., 7:8]], -1)
+
+
 class Clips(torch.utils.data.Dataset):
-    def __init__(self, files, text, q01, q99, cfg_prob=0.1):
+    def __init__(self, files, text, q01, q99, cfg_prob=0.1, layout="joints"):
         self.files, self.text, self.q01, self.q99, self.cfg_prob = files, text, q01, q99, cfg_prob
+        self.layout, self.slots = layout, LB.LAYOUTS[layout]["slots"]
 
     def __len__(self):
         return len(self.files)
@@ -57,19 +67,20 @@ class Clips(torch.utils.data.Dataset):
         act = torch.zeros(ACTION_DIM, Fn, ACT_PER_FRAME, 1)
         mask = torch.zeros(ACTION_DIM, Fn, ACT_PER_FRAME, 1, dtype=torch.bool)
         if d["actions"] is not None:
-            a = d["actions"].float()                                 # (F, 8 steps, 8 ch) raw
+            a = clip_actions(self.files[i], d, self.layout)          # (F, 8 steps, C) raw
             a = ((a - self.q01) / (self.q99 - self.q01 + 1e-6) * 2 - 1).clamp(-1.5, 1.5)
-            act[:N_ACT, 1:] = rearrange(a[1:], "f n c -> c f n 1")
-            mask[:N_ACT, 1:] = True                                  # frame 0 (the first image) has no actions
+            act[self.slots, 1:] = rearrange(a[1:], "f n c -> c f n 1")
+            mask[self.slots, 1:] = True                              # frame 0 (the first image) has no actions
         kind = "robot" if d["actions"] is not None else "human"
         txt = self.text["empty" if random.random() < self.cfg_prob else d.get("prompt", kind)][0]
         return dict(latents=lat.float(), actions=act * mask, actions_mask=mask, text_emb=txt.float())
 
 
-def action_stats(files):
-    a = torch.cat([torch.load(f, weights_only=False)["actions"][1:].reshape(-1, N_ACT) for f in files])
+def action_stats(files, layout="joints"):
+    a = [clip_actions(f, torch.load(f, weights_only=False), layout)[1:] for f in files]
+    a = torch.cat([x.reshape(-1, x.shape[-1]) for x in a])
     q01, q99 = torch.quantile(a, 0.01, dim=0), torch.quantile(a, 0.99, dim=0)
-    gripper = N_ACT - 1                       # +1 open / -1 close: keep the full range
+    gripper = LB.LAYOUTS[layout]["grip"]      # +1 open / -1 close: keep the full range
     q01[gripper], q99[gripper] = -1.0, 1.0
     return q01, q99
 
@@ -229,6 +240,9 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--layout", choices=list(LB.LAYOUTS), default="joints",
+                    help="action channels: joints (7 joint targets + gripper in slots 0..7) or pretrain (tcp pose in "
+                    "0..6, joints in 14..20, gripper in 28, as LingBot-VA's pretraining; needs wam/ee_actions.py)")
     ap.add_argument("--val-every", type=int, default=250)
     ap.add_argument("--save-every", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=0)
@@ -242,7 +256,7 @@ def main():
 
     val_r = tuple(a.val_robot.split(","))
     val_h = tuple(a.val_human.split(","))
-    robot = sorted(glob.glob(os.path.join(a.data, "robot", "*.pt")))
+    robot = sorted(f for f in glob.glob(os.path.join(a.data, "robot", "*.pt")) if not f.endswith(".ee.pt"))
     human = sorted(glob.glob(os.path.join(a.data, "human", "*.pt")))
     src = lambda f: os.path.basename(f).rsplit("_", 1)[0]                      # noqa: E731
     r_val = [f for f in robot if src(f) in val_r]
@@ -254,13 +268,15 @@ def main():
     h_tr = [f for f in human if src(f) not in val_h]
     random.Random(0).shuffle(r_val)
     random.Random(0).shuffle(h_val)
-    q01, q99 = action_stats(r_tr)
+    q01, q99 = action_stats(r_tr, a.layout)
     text = torch.load(os.path.join(a.data, "text.pt"))
-    ds_r = Clips(r_tr, text, q01, q99)
-    ds_h = Clips(h_tr, text, q01, q99)
+    ds_r = Clips(r_tr, text, q01, q99, layout=a.layout)
+    ds_h = Clips(h_tr, text, q01, q99, layout=a.layout)
     meta = dict(vars(a), n_robot_train=len(r_tr), n_robot_runs=len({src(f) for f in r_tr}), n_human_train=len(h_tr),
                 n_robot_val=len(r_val), n_human_val=len(h_val), q01=q01.tolist(), q99=q99.tolist(),
-                prompts=LB.PROMPTS, action="pd_joint_pos 7 joints + gripper (+1 open / -1 close), slots 0..7")
+                prompts=LB.PROMPTS, slots=LB.LAYOUTS[a.layout]["slots"],
+                action="pd_joint_pos 7 joints + gripper (+1 open / -1 close)"
+                + (", slots 0..7" if a.layout == "joints" else "; tcp pose (xyz wxyz) first: slots 0..6, 14..20, 28"))
     json.dump(meta, open(os.path.join(a.out, "meta.json"), "w"), indent=1)
     print(json.dumps({k: v for k, v in meta.items() if k not in ("q01", "q99", "prompts")}), flush=True)
 

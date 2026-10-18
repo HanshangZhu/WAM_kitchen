@@ -34,3 +34,15 @@ def base_dir():
         return BASE
     from huggingface_hub import snapshot_download
     return snapshot_download(BASE)
+
+
+# Where the robot's action channels sit in LingBot-VA's 30 (per arm: end-effector pose 7, joints 7,
+# gripper 1; wan_va/configs/va_franka_cfg.py: pose in 0..6 / 7..13, joints 14..27, grippers 28 / 29).
+# Indices into the used-channel vector (the order of `slots`) for each part.
+LAYOUTS = {
+    # the first runs: 7 joint targets + gripper in slots 0..7 (the pose slots of the pretraining)
+    "joints": dict(slots=list(range(8)), ee=None, joints=slice(0, 7), grip=7),
+    # as the pretraining: tcp pose (xyz + wxyz quaternion, robot base frame) in 0..6, joint
+    # targets in 14..20, gripper in 28
+    "pretrain": dict(slots=list(range(7)) + list(range(14, 21)) + [28], ee=slice(0, 7), joints=slice(7, 14), grip=14),
+}

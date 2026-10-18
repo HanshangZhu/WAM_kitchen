@@ -45,12 +45,16 @@ def make_config(meta, guidance, save_root):
     c.height, c.width = H, W
     c.obs_cam_keys = [CAM_KEY]
     c.action_dim, c.action_per_frame, c.frame_chunk_size = 30, 8, 4
-    c.used_action_channel_ids = list(range(8))
-    inv = [8] * 30
-    for i, j in enumerate(c.used_action_channel_ids):
+    slots = meta.get("slots", list(range(8)))         # LB.LAYOUTS; the first runs: 0..7
+    c.used_action_channel_ids = slots
+    inv = [len(slots)] * 30
+    for i, j in enumerate(slots):
         inv[j] = i
     c.inverse_used_action_channel_ids = inv
-    c.norm_stat = {"q01": list(meta["q01"]) + [0.0] * 22, "q99": list(meta["q99"]) + [0.0] * 22}
+    q01, q99 = [0.0] * 30, [0.0] * 30                 # per slot
+    for i, j in enumerate(slots):
+        q01[j], q99[j] = meta["q01"][i], meta["q99"][i]
+    c.norm_stat = {"q01": q01, "q99": q99}
     c.snr_shift, c.action_snr_shift = 5.0, 1.0
     c.guidance_scale, c.action_guidance_scale = guidance, 1
     c.attn_window = int(os.environ.get("VA_ATTN_WINDOW", c.attn_window))   # KV cache: attn_window // 2 chunks
@@ -91,10 +95,34 @@ def main():
     ap.add_argument("--no-splat", action="store_true")
     ap.add_argument("--guidance", type=float, default=5.0)
     ap.add_argument("--prompt", default="robot", help="robot | human | any text")
+    ap.add_argument("--exec", choices=["joints", "ee_ik"], default="joints",
+                    help="joints: execute the predicted joint targets. ee_ik (a --layout pretrain model): the predicted "
+                    "tcp pose, by IK seeded with the predicted joints (they pick the arm's configuration, the pose "
+                    "where the hand goes); the joints themselves where the IK does not converge near them. "
+                    "(ManiSkill's pd_ee_pose, IK from the current arm, cannot follow the demos' reconfigurations: "
+                    "replaying a demo with it, the hand is 5 cm off from the first wrist turn on.)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     meta = json.load(open(a.meta or os.path.join(os.path.dirname(a.lora), "meta.json")))
+    L = LB.LAYOUTS["pretrain" if meta.get("slots", list(range(8))) == LB.LAYOUTS["pretrain"]["slots"] else "joints"]
+    assert a.exec == "joints" or L["ee"] is not None, "--exec ee_ik needs a --layout pretrain model"
+    ik_stats = dict(steps=0, used=0)
+
+    def env_action(v, pm=None, ee=None):
+        """one step of the model's action (used channels) -> pd_joint_pos action"""
+        qj = np.asarray(v[L["joints"]], float)
+        if a.exec == "ee_ik":
+            import sapien
+            P = v[L["ee"]]
+            q, ok, _ = pm.compute_inverse_kinematics(ee, sapien.Pose(P[:3], P[3:] / np.linalg.norm(P[3:])),
+                                                     initial_qpos=np.r_[qj, 0.04, 0.04],
+                                                     active_qmask=[1] * 7 + [0, 0], max_iterations=100)
+            ik_stats["steps"] += 1
+            if ok and np.abs(q[:7] - qj).max() < 0.3:        # converged, on the predicted configuration
+                qj = q[:7]
+                ik_stats["used"] += 1
+        return np.r_[qj, v[L["grip"]]]
     prompt = LB.PROMPTS.get(a.prompt, a.prompt)
 
     import gymnasium as gym
@@ -126,6 +154,9 @@ def main():
                        max_episode_steps=a.max_steps + 100)
         obs, _ = env.reset(seed=1000 + ep)
         u = env.unwrapped
+        robot = u.agent.robot._objs[0]
+        pm = robot.create_pinocchio_model() if a.exec == "ee_ik" else None
+        ee_link = [i for i, l in enumerate(robot.links) if l.name.endswith("panda_hand_tcp")][0]
         ids = [0, *u.ground.per_scene_id.tolist()]
 
         def front(o):
@@ -143,7 +174,7 @@ def main():
             keys = []
             for i in range(1 if first else 0, action.shape[1]):
                 for j in range(action.shape[2]):
-                    obs, _, term, trunc, info = env.step(torch.from_numpy(action[:, i, j]).float()[None])
+                    obs, _, term, trunc, info = env.step(torch.from_numpy(env_action(action[:, i, j], pm, ee_link)).float()[None])
                     t += 1
                     door_max = max(door_max, float(info["door_deg"][0]))
                     pot_zmax = max(pot_zmax, float(u.pot_in_mw()[0, 2]))
@@ -164,7 +195,9 @@ def main():
         ok = bool(info.get("success", [False])[0])
         r = dict(episode=ep, pot=pots[ep], steps=t, success=ok, stop=stop, door_max_deg=round(door_max, 1),
                  pot_zmax_cm=round(pot_zmax * 100, 1), pot_ever_inside=ever_inside, wall_s=round(time.time() - t0),
-                 chunks=len(lat), camera=a.camera, splat=R is not None)
+                 chunks=len(lat), camera=a.camera, splat=R is not None, exec=a.exec,
+                 ik_used=round(ik_stats["used"] / max(ik_stats["steps"], 1), 3))
+        ik_stats.update(steps=0, used=0)
         print(json.dumps(r), flush=True)
         results.append(r)
         imageio.mimwrite(os.path.join(a.out, f"ep{ep:02d}_seen.mp4"), seen, fps=10, codec="libx264", quality=7,
