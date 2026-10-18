@@ -1,0 +1,6 @@
+# Machine-local setup and raw captured data: important, but not part of the submission.
+Gitignore-but-important
+__pycache__/
+*.pyc
+# local rollouts / videos
+outputs/

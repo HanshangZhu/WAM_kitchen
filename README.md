@@ -32,11 +32,23 @@ So here the human data changes sides of the pipeline:
 | 0 | object-centric world model on the three existing takes (state: pot pose + door angle; action: wrist pose); evaluated in the twin against simulated object states | next |
 | 1 | ego-video capture at scale (head-mounted RealSense / phone), wrist tracking | planned |
 | 2 | V-JEPA 2 / WAM video head fine-tuned on the captures; prediction quality vs horizon | planned |
+| 2a | LingBot-VA (a world-action model, Wan2.2 5B) LoRA post-trained on twin demonstrations rendered over the room splat, with the 49 cleaned ego takes as video-only clips; closed loop in the twin | in progress: 0/8 at most checkpoints, 1/8 at best |
 | 3 | action head: SFT on simulator demonstrations, RL in the twin | planned |
 | 4 | whole-body G1 in Isaac Lab on an existing whole-body controller | planned |
 
-Assets, twin, registration and per-frame object extraction come from the first repository
-(`recon/`, `sim/`); the room splat and the three takes are recordings of my home and are
-shared on request (zcabhz4@ucl.ac.uk).
+## Contents
+
+- `wam/` -- the LingBot-VA work (step 2a): `render_va.py` renders solver demonstrations from a
+  take's camera over the room splat, `encode_va.py` encodes robot runs and ego takes to VAE latents,
+  `train_va.py` is the LoRA post-training, `eval_va.py` the closed loop in the twin;
+  `imagine_va.py`, `prefix_va.py` and `action_acc_va.py` are diagnostics (imagined video from a
+  start or a demonstration prefix; action error with the true history).
+- `sim/`, `assets/`, `recon/gs_server.py`, `recon/gs_kitchen.py` -- the twin, the scripted solver
+  and demonstration generator, and the splat renderer, copied from the first repository on
+  18 October 2026 and developed here since (the solver's `--smooth`, `--miss-back`, `--speed`).
+
+Registration and per-frame object extraction stay in the first repository. The room splat and
+the takes are recordings of my home and are shared on request (zcabhz4@ucl.ac.uk); scripts expect
+them, and all generated data, under `Gitignore-but-important/` (not in git).
 
 *Started 17 October 2026.*
