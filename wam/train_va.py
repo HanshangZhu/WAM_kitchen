@@ -53,9 +53,10 @@ def clip_actions(f, d, layout):
 
 
 class Clips(torch.utils.data.Dataset):
-    def __init__(self, files, text, q01, q99, cfg_prob=0.1, layout="joints"):
+    def __init__(self, files, text, q01, q99, cfg_prob=0.1, layout="joints", max_frames=0, random_crop=True):
         self.files, self.text, self.q01, self.q99, self.cfg_prob = files, text, q01, q99, cfg_prob
         self.layout, self.slots = layout, LB.LAYOUTS[layout]["slots"]
+        self.max_frames, self.random_crop = max_frames, random_crop
 
     def __len__(self):
         return len(self.files)
@@ -71,6 +72,11 @@ class Clips(torch.utils.data.Dataset):
             a = ((a - self.q01) / (self.q99 - self.q01 + 1e-6) * 2 - 1).clamp(-1.5, 1.5)
             act[self.slots, 1:] = rearrange(a[1:], "f n c -> c f n 1")
             mask[self.slots, 1:] = True                              # frame 0 (the first image) has no actions
+        if self.max_frames and Fn > self.max_frames:
+            # a clip longer than fits in memory: a window of it, its first frame as a clip's (no actions)
+            s0 = random.randint(0, Fn - self.max_frames) if self.random_crop else 0
+            lat, act, mask = (x[:, s0:s0 + self.max_frames] for x in (lat, act, mask))
+            act[:, 0], mask[:, 0] = 0, False
         kind = "robot" if d["actions"] is not None else "human"
         txt = self.text["empty" if random.random() < self.cfg_prob else d.get("prompt", kind)][0]
         return dict(latents=lat.float(), actions=act * mask, actions_mask=mask, text_emb=txt.float())
@@ -211,7 +217,8 @@ def val_loss(model, step, files, ds, dev, n=24):
     for k, f in enumerate(files[:n]):
         torch.manual_seed(1000 + k)
         random.seed(1000 + k)
-        b = {kk: v[None] for kk, v in Clips([f], ds.text, ds.q01, ds.q99, 0.0, layout=ds.layout)[0].items()}
+        b = {kk: v[None] for kk, v in Clips([f], ds.text, ds.q01, ds.q99, 0.0, layout=ds.layout,
+                                                   max_frames=ds.max_frames, random_crop=False)[0].items()}
         inp = step.prepare(to_dev(b, dev), chunk_size=2, window_size=100000 if step.full_window_p > 0 else 32)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             ll, aa = step.loss(inp, model(inp, train_mode=True))
@@ -240,6 +247,8 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--max-latent-frames", type=int, default=0, help="> 0: clips longer than this many latent frames "
+                    "are trained on a random window of that length (validation: the first window); memory")
     ap.add_argument("--wrist", action="store_true", help="the data's frames hold the hand camera right of the front "
                     "view (encode_va.py --wrist); recorded in meta.json for eval_va.py")
     ap.add_argument("--layout", choices=list(LB.LAYOUTS), default="joints",
@@ -272,8 +281,8 @@ def main():
     random.Random(0).shuffle(h_val)
     q01, q99 = action_stats(r_tr, a.layout)
     text = torch.load(os.path.join(a.data, "text.pt"))
-    ds_r = Clips(r_tr, text, q01, q99, layout=a.layout)
-    ds_h = Clips(h_tr, text, q01, q99, layout=a.layout)
+    ds_r = Clips(r_tr, text, q01, q99, layout=a.layout, max_frames=a.max_latent_frames)
+    ds_h = Clips(h_tr, text, q01, q99, layout=a.layout, max_frames=a.max_latent_frames)
     meta = dict(vars(a), n_robot_train=len(r_tr), n_robot_runs=len({src(f) for f in r_tr}), n_human_train=len(h_tr),
                 n_robot_val=len(r_val), n_human_val=len(h_val), q01=q01.tolist(), q99=q99.tolist(),
                 prompts=LB.PROMPTS, slots=LB.LAYOUTS[a.layout]["slots"],
