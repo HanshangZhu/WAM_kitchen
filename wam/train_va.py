@@ -247,6 +247,7 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--fp8", action="store_true", help="the frozen base matmuls in fp8 (torchao); speed, not memory")
     ap.add_argument("--optim", choices=["adamw", "adamw8bit"], default="adamw",
                     help="adamw8bit: bitsandbytes AdamW8bit, ~6 bytes less per trainable parameter (2 GB at rank 128)")
     ap.add_argument("--max-latent-frames", type=int, default=0, help="> 0: clips longer than this many latent frames "
@@ -299,6 +300,13 @@ def main():
                              torch_device="cpu", attn_mode="flex")
     model.requires_grad_(False)
     n_lora = add_lora(model, a.rank, alpha=a.rank)
+    if a.fp8:
+        # the frozen base matmuls of every LoRA-wrapped linear in fp8 (torchao Float8Linear, dynamic tensorwise
+        # scaling; Blackwell / Ada tensor cores); the LoRA path, attention, norms and the action layers stay bf16 / fp32
+        from torchao.float8 import convert_to_float8_training
+        convert_to_float8_training(model, module_filter_fn=lambda mod, fqn: fqn.endswith(".base"))
+        n8 = sum(type(m).__name__ == "Float8Linear" for m in model.modules())
+        print(f"fp8: {n8} base linears", flush=True)
     for m in (model.action_embedder, model.action_proj_out):
         m.float().requires_grad_(True)
     apply_ac(model)
