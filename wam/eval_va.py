@@ -155,7 +155,7 @@ def main():
         obs, _ = env.reset(seed=1000 + ep)
         u = env.unwrapped
         robot = u.agent.robot._objs[0]
-        pm = robot.create_pinocchio_model() if a.exec == "ee_ik" else None
+        pm = robot.create_pinocchio_model() if L["ee"] is not None else None
         ee_link = [i for i, l in enumerate(robot.links) if l.name.endswith("panda_hand_tcp")][0]
         ids = [0, *u.ground.per_scene_id.tolist()]
 
@@ -172,9 +172,20 @@ def main():
             action, latents = m._infer({"obs": [{CAM_KEY: seen[-1]}]}, frame_st_id=m.frame_st_id)
             lat.append(latents)
             keys = []
+            # what goes back into the cache is what was executed, self-consistent as in training (the tcp pose
+            # slots = FK of the executed joints); feeding back the two predicted outputs as they are lets any
+            # disagreement between them compound chunk after chunk (20-45 cm apart within ~10 s)
+            done = action.copy()
             for i in range(1 if first else 0, action.shape[1]):
                 for j in range(action.shape[2]):
-                    obs, _, term, trunc, info = env.step(torch.from_numpy(env_action(action[:, i, j], pm, ee_link)).float()[None])
+                    act = env_action(action[:, i, j], pm, ee_link)
+                    done[L["joints"], i, j] = act[:7]
+                    if L["ee"] is not None:
+                        pm.compute_forward_kinematics(np.r_[act[:7], 0.04, 0.04])
+                        Pq = pm.get_link_pose(ee_link)
+                        qq = np.asarray(Pq.q)                 # the sign the training data uses: as the prediction's
+                        done[L["ee"], i, j] = np.r_[Pq.p, qq if qq @ action[L["ee"], i, j][3:] >= 0 else -qq]
+                    obs, _, term, trunc, info = env.step(torch.from_numpy(act).float()[None])
                     t += 1
                     door_max = max(door_max, float(info["door_deg"][0]))
                     pot_zmax = max(pot_zmax, float(u.pot_in_mw()[0, 2]))
@@ -191,7 +202,7 @@ def main():
             first = False
             if stop == "success":
                 break
-            m._compute_kv_cache({"obs": keys, "state": action})
+            m._compute_kv_cache({"obs": keys, "state": done})
         ok = bool(info.get("success", [False])[0])
         r = dict(episode=ep, pot=pots[ep], steps=t, success=ok, stop=stop, door_max_deg=round(door_max, 1),
                  pot_zmax_cm=round(pot_zmax * 100, 1), pot_ever_inside=ever_inside, wall_s=round(time.time() - t0),
