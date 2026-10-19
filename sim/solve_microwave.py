@@ -393,6 +393,7 @@ class Solver:
         print(f"handle grasp: arc followed to {len(best[2])} deg, joint-limit margin {best[4]:.2f} rad, "
               f"flip {self.flip}", flush=True)
         q_grasp, arc_qs = best[1], best[2]
+        self.handle_margin = float(best[4])
         approach = arm.path([handle_pose(q0, back=b) for b in np.arange(0.01, 0.1001, 0.01)], q_grasp)
         self.handle_plan = (q_grasp, arc_qs, approach)
         return len(approach) == 10
@@ -669,6 +670,8 @@ def main():
     ap.add_argument("--j5-max", type=float, default=0.0, help="--smooth: also keep |j5| below this (deg); 0: off "
                     "(the handle grasp needs j5 near its limit)")
     ap.add_argument("--miss-back", type=float, default=0.0, help="> 0: a missed handle grasp (this far short of the bar, m) and a retry")
+    ap.add_argument("--base", type=float, nargs=2, default=None, help="the Panda's base in the mw frame "
+                    "(default microwave_env.ROBOT_IN_MW, (0.25, -0.70))")
     ap.add_argument("--start", choices=["closed", "half", "open", "inside", "lip"], default="closed",
                     help="the task's state at the start: door shut (the whole task); door part-open (re-open it, "
                     "then the rest); door open with the pot on the counter / in the cavity / just in front of the "
@@ -693,6 +696,8 @@ def main():
     if a.start == "inside":                     # the pot on the turntable
         a.pot_z = json.load(open(M.MW_PARAMS))["derived"]["turntable_top_z"]
     door_q0 = 0.0 if a.start == "closed" else np.deg2rad(a.door_deg)
+    if a.base is not None:
+        M.set_robot_in_mw(a.base)
     env = gym.make("MicrowavePot-v0", obs_mode="state", control_mode="pd_joint_pos", pot_mw=(*pot_xy, yaw),
                    pot_z=a.pot_z, door_q0=door_q0, sim_backend="cpu", max_episode_steps=4000,
                    **(render or dict(render_backend="none")))
@@ -741,6 +746,8 @@ def main():
     res["joint_jumps"] = arm.jumps
     res["smooth"] = bool(a.smooth)
     res["start"], res["door_deg0"], res["place_short"] = a.start, float(np.degrees(door_q0)), a.place_short
+    res["base"] = M.ROBOT_IN_MW.tolist()
+    res["handle_margin_rad"] = getattr(S, "handle_margin", None)
     json.dump(res, open(os.path.join(a.out, "result.json"), "w"), indent=1)
     # the (observation, clean planned action) pairs; with --dart-noise these differ from
     # what was executed, which is the point
