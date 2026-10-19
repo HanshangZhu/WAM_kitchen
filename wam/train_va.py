@@ -247,6 +247,8 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--optim", choices=["adamw", "adamw8bit"], default="adamw",
+                    help="adamw8bit: bitsandbytes AdamW8bit, ~6 bytes less per trainable parameter (2 GB at rank 128)")
     ap.add_argument("--max-latent-frames", type=int, default=0, help="> 0: clips longer than this many latent frames "
                     "are trained on a random window of that length (validation: the first window); memory")
     ap.add_argument("--wrist", action="store_true", help="the data's frames hold the hand camera right of the front "
@@ -317,7 +319,11 @@ def main():
     model.to(dev)
     params = [p for p in model.parameters() if p.requires_grad]
     print(f"LoRA on {n_lora} linears, {sum(p.numel() for p in params) / 1e6:.1f} M trainable", flush=True)
-    opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
+    if a.optim == "adamw8bit":         # Adam's two moments in 8 bits (bitsandbytes); weights and gradients stay fp32
+        import bitsandbytes as bnb
+        opt = bnb.optim.AdamW8bit(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
+    else:
+        opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / 50))
     step = Step(dev, a.full_window_p)
     model.train()
