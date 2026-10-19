@@ -57,7 +57,7 @@ def pose_err(a, b):
     """position (cm), rotation (deg) between two (xyz, wxyz) poses"""
     d = np.linalg.norm(a[:3] - b[:3]) * 100
     qa, qb = a[3:] / np.linalg.norm(a[3:]), b[3:] / np.linalg.norm(b[3:])
-    return d, np.degrees(2 * np.arccos(min(1.0, abs(float(qa @ qb)))))
+    return float(d), float(np.degrees(2 * np.arccos(min(1.0, abs(float(qa @ qb))))))
 
 
 @torch.no_grad()
