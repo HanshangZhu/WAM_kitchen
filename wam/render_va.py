@@ -34,6 +34,16 @@ def crop(img):
     return img[1:1 + H]
 
 
+WRIST_SIDE = 160    # the hand camera (128 x 128) scaled to the front frame's height, to its right
+
+
+def with_wrist(front, wrist):
+    """front (160, 288, 3) + wrist (128, 128, 3) -> (160, 448, 3): the two views side by side, encoded and
+    predicted as one frame (LingBot-VA then sees one camera; nothing in its code changes)"""
+    import cv2
+    return np.concatenate([front, cv2.resize(wrist, (WRIST_SIDE, WRIST_SIDE), interpolation=cv2.INTER_AREA)], 1)
+
+
 def render_run(args):
     run_dir, stride, take, splat, suffix = args[:5]
     wrist = len(args) > 5 and args[5]

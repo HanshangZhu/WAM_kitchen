@@ -240,6 +240,8 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--wrist", action="store_true", help="the data's frames hold the hand camera right of the front "
+                    "view (encode_va.py --wrist); recorded in meta.json for eval_va.py")
     ap.add_argument("--layout", choices=list(LB.LAYOUTS), default="joints",
                     help="action channels: joints (7 joint targets + gripper in slots 0..7) or pretrain (tcp pose in "
                     "0..6, joints in 14..20, gripper in 28, as LingBot-VA's pretraining; needs wam/ee_actions.py)")

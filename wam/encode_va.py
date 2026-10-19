@@ -114,6 +114,8 @@ def main():
     ap.add_argument("--video", default="va_front_splat")
     ap.add_argument("--text-device", default="cpu")
     ap.add_argument("--max-runs", type=int, default=0, help="robot: first N runs per generator dir (smoke test)")
+    ap.add_argument("--wrist", action="store_true", help="robot: the hand camera to the right of the front view "
+                    "(render_va.py --wrist; render_va.with_wrist), one 160 x 448 frame")
     ap.add_argument("--whole", action="store_true", help="robot: one clip per run, the whole demonstration "
                                                           "(cut to 1 + 4 K frames) instead of K-frame clips every --hop")
     a = ap.parse_args()
@@ -134,6 +136,9 @@ def main():
                 continue
             z = np.load(v)
             front, idx = z["front"], z["idx"]
+            if a.wrist:
+                from wam.render_va import with_wrist
+                front = np.stack([with_wrist(f, w) for f, w in zip(front, z["wrist"])])
             acts = robot_actions(rd)
             src = f"{os.path.basename(d)}_{r['run']:03d}"
             os.makedirs(os.path.join(a.out, "robot"), exist_ok=True)

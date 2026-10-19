@@ -24,7 +24,7 @@ import torch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from wam import _lingbot as LB  # noqa: E402
-from wam.render_va import H, H_RENDER, W, crop  # noqa: E402
+from wam.render_va import H, H_RENDER, W, WRIST_SIDE, crop, with_wrist  # noqa: E402
 
 SPLAT = os.path.join(ROOT, "Gitignore-but-important/recon/kitchen/gs_dense_po/ckpt.pt")
 CAM_KEY = "observation.images.front"
@@ -42,7 +42,7 @@ def make_config(meta, guidance, save_root):
     from configs import VA_CONFIGS
     c = EasyDict(VA_CONFIGS["demo"])
     c.wan22_pretrained_model_name_or_path = LB.base_dir()
-    c.height, c.width = H, W
+    c.height, c.width = H, W + (WRIST_SIDE if meta.get("wrist") else 0)    # + the hand camera, right of the front
     c.obs_cam_keys = [CAM_KEY]
     c.action_dim, c.action_per_frame, c.frame_chunk_size = 30, 8, 4
     slots = meta.get("slots", list(range(8)))         # LB.LAYOUTS; the first runs: 0..7
@@ -161,7 +161,11 @@ def main():
 
         def front(o):
             img = composite(o, R, "front", ids) if R else o["sensor_data"]["front"]["rgb"][0].cpu().numpy()
-            return crop(V.downsample(img, "front"))
+            img = crop(V.downsample(img, "front"))
+            if meta.get("wrist"):
+                w = composite(o, R, "wrist", ids) if R else o["sensor_data"]["wrist"]["rgb"][0].cpu().numpy()
+                img = with_wrist(img, V.downsample(w, "wrist"))
+            return img
 
         torch.manual_seed(1000 + ep)
         m._reset(prompt)
