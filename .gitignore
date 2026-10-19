@@ -6,3 +6,5 @@ __pycache__/
 outputs/
 # notes for the coding assistant: local only
 CLAUDE.md
+# research-state ledger: local only
+.cvpr/
