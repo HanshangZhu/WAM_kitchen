@@ -211,7 +211,7 @@ def val_loss(model, step, files, ds, dev, n=24):
     for k, f in enumerate(files[:n]):
         torch.manual_seed(1000 + k)
         random.seed(1000 + k)
-        b = {kk: v[None] for kk, v in Clips([f], ds.text, ds.q01, ds.q99, 0.0)[0].items()}
+        b = {kk: v[None] for kk, v in Clips([f], ds.text, ds.q01, ds.q99, 0.0, layout=ds.layout)[0].items()}
         inp = step.prepare(to_dev(b, dev), chunk_size=2, window_size=100000 if step.full_window_p > 0 else 32)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             ll, aa = step.loss(inp, model(inp, train_mode=True))
