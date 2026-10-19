@@ -42,6 +42,8 @@ def main():
     ap.add_argument("--smooth", action="store_true", help="sim/solve_microwave.py --smooth (fewer wrist flips)")
     ap.add_argument("--miss-p", type=float, default=0.0, help="probability per run of a missed handle grasp + retry")
     ap.add_argument("--miss-back", type=float, default=0.04, help="how far short of the bar the missed grasp closes (m)")
+    ap.add_argument("--place-short-p", type=float, default=0.0, help="probability per run of a failed place first "
+                    "(the pot left on the cavity's front edge, y 0.000-0.015), then grasped there and slid in")
     ap.add_argument("--starts", default="closed", help="comma-separated start states (sim/solve_microwave.py --start), "
                     "one drawn per run: closed, half (door 25-65 deg), open / inside / lip (door 75-100 deg; pot on "
                     "the counter / at the place target in the cavity / 15-20 cm in front of the opening)")
@@ -66,6 +68,8 @@ def main():
             c["pot"] = list(c["place"])
         elif c["start"] == "lip":
             c["pot"] = [c["place"][0], round(float(r.uniform(-0.20, -0.15)), 4)]
+        c["place_short"] = round(float(r.uniform(0.0, 0.015)), 4) \
+            if c["start"] != "inside" and r.random() < a.place_short_p else None
     print(f"pick region x {lo_p[0]:.3f}..{hi_p[0]:.3f}, y {lo_p[1]:.3f}..{hi_p[1]:.3f}; "
           f"place region x {lo_q[0]:.3f}..{hi_q[0]:.3f}, y {lo_q[1]:.3f}..{hi_q[1]:.3f}", flush=True)
 
@@ -82,6 +86,8 @@ def main():
             cmd += ["--speed", str(a.speed)]
         if c["start"] != "closed":
             cmd += ["--start", c["start"], "--door-deg", str(c["door0"])]
+        if c["place_short"] is not None:
+            cmd += ["--place-short", str(c["place_short"])]
         if a.smooth:
             cmd.append("--smooth")
         if a.miss_p > 0 and np.random.default_rng(a.seed * 100003 + c["run"]).random() < a.miss_p:

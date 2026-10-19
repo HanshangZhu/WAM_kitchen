@@ -444,7 +444,7 @@ class Solver:
     # nothing is in the way (above the microwave and the door, or out in front).
 
     def pick_and_place(self, place, from_tcp=False, hold=False, human=None, human_smooth=False, human_carry_only=False,
-                       carry_z=0.25, short_y=None):
+                       carry_z=0.25, short_y=None, slide=False):
         """2+3. Pick the pot and put it in the cavity, planned as ONE pose sequence --
         approach, grasp, lift, across high, down in front of the opening, in, down -- so the
         whole carry is a single continuous joint path: any joint-space move while holding the
@@ -452,8 +452,10 @@ class Solver:
         out drags it along). from_tcp: the approach starts where the hand is now (it is
         already in front of the pot, on the approach line) instead of 10 cm in front of it.
         hold: the hand has already closed on the pot; carry it from where it is.
-        short_y: a failed place -- the pot is put down on the counter at short_y (mw, in front of the
-        opening) instead of in the cavity; picking it up again from there is the next call's job.
+        short_y: a failed place -- the pot is let go at the opening, its centre at short_y (mw), half on the
+        cavity's front edge (not 'inside': that needs y > 0.03), instead of at place.
+        slide: the pot is at the opening (after short_y): grasp it from the front where it is and slide it
+        in, level, to place -- no lift (a lift from the opening hits the top of the cavity).
         human: sim/human_paths.load(take) -- follow the demonstrator's hand where it was seen:
         its approach (moved with the pot, kept in front of and above it) and its carry path
         (warped from the take's pick/place to this episode's), with this solver's hand
@@ -464,14 +466,17 @@ class Solver:
         arm, step, u, der = self.arm, self.step, self.u, self.der
         smooth = human_smooth
         p = u.pot_in_mw().cpu().numpy()[0]
-        c = np.array([p[0], p[1], POT_GRASP_Z + u.pot_z])       # pot_z: started on a raised surface
+        # pot_z: started on a raised surface; a pot that has been moved is taken at its height now
+        c = np.array([p[0], p[1], POT_GRASP_Z + (p[2] if abs(p[2] - u.pot_z) > 0.01 else u.pot_z)])
         # level, from the front (+y_mw), fingers across the pot's short side: the same hand
         # orientation as for going into the cavity, so the carry is a pure translation
         app, clo = np.array([0, 1.0, 0]), np.array([1.0, 0, 0])
         x, y = place
         z_place = der["turntable_top_z"] + POT_GRASP_Z + 0.001   # 1 mm drop: no tilt on release
         if short_y is not None:
-            y, z_place = short_y, POT_GRASP_Z + 0.006          # let go 5 mm up: no push into the counter
+            # (put down on the counter in front of the microwave instead: the arm's wrist links reach the
+            # counter before the hand does there, close to the base, and the pot is dropped from 3 cm)
+            y = short_y
         g = lambda xyz: self.grasp_pose(xyz, app, clo)
         if hold:
             c = M.world_to_mw(arm.tcp().p)
@@ -524,7 +529,11 @@ class Solver:
                 seg_lift = arm.line(g([c[0], c[1], carry_z]), start=seg_reach[-1])
                 seg_across = arm.line(g([x, -0.30, carry_z]), start=seg_lift[-1])
                 seg_down = arm.line(g([x, -0.30, z_place + 0.02]), start=seg_across[-1])
-            seg_in = arm.line(g([x, y, z_place + 0.02]), start=seg_down[-1]) + [g([x, y, z_place])]
+            if slide:
+                seg_lift, seg_across, seg_down = [], [], []
+                seg_in = arm.line(g([x, y, c[2] + 0.005]), start=seg_reach[-1]) + [g([x, y, z_place])]
+            else:
+                seg_in = arm.line(g([x, y, z_place + 0.02]), start=seg_down[-1]) + [g([x, y, z_place])]
             return [seg_reach, seg_lift, seg_across, seg_down, seg_in]
 
         # with a human path: the whole of it, else only its carry, else none -- whichever the
@@ -566,7 +575,8 @@ class Solver:
             names = ("lift", "carry (human path)", "down to the opening", "in, down") if use_carry else \
                 ("lift", "across, high", "down", "in, down")
             for name, i0, i1 in zip(names, range(1, 5), range(2, 6)):
-                ok = ok and step(name, arm.execute(qs[k[i0]:k[i1]], settle=4))
+                if k[i1] > k[i0]:
+                    ok = ok and step("slide in" if slide else name, arm.execute(qs[k[i0]:k[i1]], settle=4))
         if ok:
             arm.gripper(OPEN, n=30)
             if os.environ.get("DEBUG_RELEASE"):
@@ -664,9 +674,9 @@ def main():
                     "then the rest); door open with the pot on the counter / in the cavity / just in front of the "
                     "opening (--pot); the solver does what is left")
     ap.add_argument("--door-deg", type=float, default=90.0, help="--start other than closed: the door's start angle")
-    ap.add_argument("--place-short", type=float, default=0.0, help="< 0: a failed place first -- the pot put down "
-                    "on the counter at this y (mw, e.g. -0.17), then picked up again and put in. Not usable yet: the pot is "
-                    "left tilted on the counter and the second grasp does not lift it")
+    ap.add_argument("--place-short", type=float, default=None, help="a failed place first: the pot let go with its "
+                    "centre at this y (mw; e.g. 0.015, on the cavity's front edge, not 'inside'), then grasped where it is "
+                    "and slid in to --place")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     if a.take:
@@ -706,12 +716,15 @@ def main():
     else:                                       # the door is open already: out of the way, then the rest
         q_tuck = S.tuck_q()
         ok = S.step("tuck", q_tuck is not None and arm.move_joint(q_tuck, step=0.02))
-    if ok and a.place_short < 0 and a.start != "inside":
+    slide = False
+    if ok and a.place_short is not None and a.start != "inside":
         ok = S.pick_and_place(a.place, carry_z=a.carry_z, short_y=a.place_short)
-        ok = S.step("put down short of the opening", ok and not bool(S.u.evaluate()["pot_inside"][0]))
+        ok = S.step("left at the opening (not inside)", ok and not bool(S.u.evaluate()["pot_inside"][0]))
+        slide = True
     if ok and a.start != "inside":
-        ok = S.pick_and_place(a.place, human=HP.load(a.human) if a.human else None, human_smooth=a.human_smooth,
-                              human_carry_only=a.human_carry_only, carry_z=a.carry_z)
+        ok = S.pick_and_place(a.place, human=HP.load(a.human) if a.human and not slide else None,
+                              human_smooth=a.human_smooth, human_carry_only=a.human_carry_only, carry_z=a.carry_z,
+                              slide=slide)
     if ok:
         ok = S.shut_door()
 
