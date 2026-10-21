@@ -42,6 +42,8 @@ def main():
     ap.add_argument("--smooth", action="store_true", help="sim/solve_microwave.py --smooth (fewer wrist flips)")
     ap.add_argument("--miss-p", type=float, default=0.0, help="probability per run of a missed handle grasp + retry")
     ap.add_argument("--miss-back", type=float, default=0.04, help="how far short of the bar the missed grasp closes (m)")
+    ap.add_argument("--pot-miss-p", type=float, default=0.0, help="probability per run of a missed pot grasp + retry")
+    ap.add_argument("--pot-miss", default="0.05,0.07", help="lo,hi: how far short of the pot grasp the miss closes (m, uniform)")
     ap.add_argument("--place-short-p", type=float, default=0.0, help="probability per run of a failed place first "
                     "(the pot left on the cavity's front edge, y 0.000-0.015), then grasped there and slid in")
     ap.add_argument("--starts", default="closed", help="comma-separated start states (sim/solve_microwave.py --start), "
@@ -92,6 +94,10 @@ def main():
             cmd.append("--smooth")
         if a.miss_p > 0 and np.random.default_rng(a.seed * 100003 + c["run"]).random() < a.miss_p:
             cmd += ["--miss-back", str(a.miss_back)]
+        rp = np.random.default_rng(a.seed * 100019 + c["run"])
+        if a.pot_miss_p > 0 and rp.random() < a.pot_miss_p:
+            lo, hi = (float(v) for v in a.pot_miss.split(","))
+            cmd += ["--pot-miss", str(round(float(rp.uniform(lo, hi)), 3))]
         if a.carry_z is not None:
             cmd += ["--carry-z", str(a.carry_z)]
         if a.dart_noise > 0:
@@ -107,7 +113,7 @@ def main():
         except Exception:
             r = dict(success=False, crashed=True, phases=[])
         fail = next((p["phase"] for p in r.get("phases", []) if not p["solved"]), None)
-        out = dict(c, success=r["success"], miss=r.get("miss_back", 0.0), pot_inside=r.get("pot_inside"), door_deg=r.get("door_deg"),
+        out = dict(c, success=r["success"], miss=r.get("miss_back", 0.0), pot_miss=r.get("pot_miss", 0.0), pot_inside=r.get("pot_inside"), door_deg=r.get("door_deg"),
                    first_failed_phase=fail, crashed=r.get("crashed", False),
                    human=r.get("human"), human_parts=r.get("human_parts"))
         print(f"run {c['run']:3d}: {'OK ' if out['success'] else 'FAIL'} pot {c['pot']} place {c['place']}"

@@ -445,7 +445,7 @@ class Solver:
     # nothing is in the way (above the microwave and the door, or out in front).
 
     def pick_and_place(self, place, from_tcp=False, hold=False, human=None, human_smooth=False, human_carry_only=False,
-                       carry_z=0.25, short_y=None, slide=False):
+                       carry_z=0.25, short_y=None, slide=False, miss_short=0.0):
         """2+3. Pick the pot and put it in the cavity, planned as ONE pose sequence --
         approach, grasp, lift, across high, down in front of the opening, in, down -- so the
         whole carry is a single continuous joint path: any joint-space move while holding the
@@ -457,6 +457,9 @@ class Solver:
         cavity's front edge (not 'inside': that needs y > 0.03), instead of at place.
         slide: the pot is at the opening (after short_y): grasp it from the front where it is and slide it
         in, level, to place -- no lift (a lift from the opening hits the top of the cavity).
+        miss_short > 0: a failed grasp first -- the hand closes miss_short (m) short of the grasp on the approach
+        line (nothing between the fingers), lifts 3 cm, finds it empty, opens, goes back down and on to the
+        real grasp. Only on the solver's own approach (not from_tcp / hold / slide).
         human: sim/human_paths.load(take) -- follow the demonstrator's hand where it was seen:
         its approach (moved with the pot, kept in front of and above it) and its carry path
         (warped from the take's pick/place to this episode's), with this solver's hand
@@ -571,7 +574,19 @@ class Solver:
                 if qv is not None:
                     arm.move_joint(qv, step=0.02)                  # over the pot, high
                 arm.move_joint(qs[0], step=0.02)
-                ok = step("reach, grasp", arm.execute(qs[1:k[1]]))
+                m = int(round(miss_short / 0.01)) if (miss_short > 0 and not slide) else 0
+                if 0 < m < k[1] - 1:
+                    ok = step("reach short of the pot (miss)", arm.execute(qs[1:k[1] - m]))
+                    arm.gripper(CLOSED)
+                    short = M.world_to_mw(arm.tcp().p)
+                    up = arm.path([g(short + [0, 0, dz]) for dz in np.arange(0.01, 0.0301, 0.01)], arm.q_cmd)
+                    ok = ok and step("lift on nothing (miss)", len(up) == 3 and arm.execute(up, settle=4))
+                    ok = ok and step("pot still down", float(u.pot_in_mw()[0, 2].cpu()) < p[2] + 0.01)
+                    arm.gripper(OPEN, n=30)
+                    ok = ok and step("down, retry", arm.execute(up[::-1][1:] + [qs[k[1] - m - 1]]))
+                    ok = ok and step("reach, grasp", arm.execute(qs[k[1] - m:k[1]]))
+                else:
+                    ok = step("reach, grasp", arm.execute(qs[1:k[1]]))
             arm.gripper(CLOSED)
             names = ("lift", "carry (human path)", "down to the opening", "in, down") if use_carry else \
                 ("lift", "across, high", "down", "in, down")
@@ -670,6 +685,8 @@ def main():
     ap.add_argument("--j5-max", type=float, default=0.0, help="--smooth: also keep |j5| below this (deg); 0: off "
                     "(the handle grasp needs j5 near its limit)")
     ap.add_argument("--miss-back", type=float, default=0.0, help="> 0: a missed handle grasp (this far short of the bar, m) and a retry")
+    ap.add_argument("--pot-miss", type=float, default=0.0, help="> 0: a missed pot grasp (the hand closes this far short "
+                    "of the grasp, m), a 3 cm lift on nothing, and a retry")
     ap.add_argument("--base", type=float, nargs=2, default=None, help="the Panda's base in the mw frame "
                     "(default microwave_env.ROBOT_IN_MW, (0.25, -0.70))")
     ap.add_argument("--start", choices=["closed", "half", "open", "inside", "lip"], default="closed",
@@ -729,7 +746,7 @@ def main():
     if ok and a.start != "inside":
         ok = S.pick_and_place(a.place, human=HP.load(a.human) if a.human and not slide else None,
                               human_smooth=a.human_smooth, human_carry_only=a.human_carry_only, carry_z=a.carry_z,
-                              slide=slide)
+                              slide=slide, miss_short=a.pot_miss)
     if ok:
         ok = S.shut_door()
 
@@ -743,6 +760,7 @@ def main():
     res["carry_z"] = a.carry_z
     res["speed"] = a.speed
     res["miss_back"] = a.miss_back
+    res["pot_miss"] = a.pot_miss
     res["joint_jumps"] = arm.jumps
     res["smooth"] = bool(a.smooth)
     res["start"], res["door_deg0"], res["place_short"] = a.start, float(np.degrees(door_q0)), a.place_short
