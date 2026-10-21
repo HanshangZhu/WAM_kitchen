@@ -126,8 +126,11 @@ def trainable_state(model):
 
 # ---- LingBot-VA's training step (wan_va/train.py Trainer, unchanged logic) -----------------
 class Step:
-    def __init__(self, dev, full_window_p=0.0):
+    def __init__(self, dev, full_window_p=0.0, action_noisy_cond_p=0.0):
         self.device = dev
+        # P(the clean action history is noised, s 0.5-1, as LingBot-VA does for the video history at 0.5): the
+        # official recipe leaves it 0, which lets the next actions be extrapolated from the past ones (copycat)
+        self.action_noisy_cond_p = action_noisy_cond_p
         self.full_window_p = full_window_p          # P(attention over the whole sample) instead of the 4..64 window
         self.patch_size = PATCH
         self.gradient_accumulation_steps = 1
@@ -171,7 +174,7 @@ class Step:
         latent_dict = self._add_noise(b["latents"], self.train_scheduler_latent, action_mask=None, action_mode=False,
                                       noisy_cond_prob=0.5)
         action_dict = self._add_noise(b["actions"], self.train_scheduler_action, action_mask=b["actions_mask"],
-                                      action_mode=True, noisy_cond_prob=0.0)
+                                      action_mode=True, noisy_cond_prob=self.action_noisy_cond_p)
         latent_dict["text_emb"] = b["text_emb"]
         action_dict["text_emb"] = b["text_emb"]
         action_dict["actions_mask"] = b["actions_mask"]
@@ -213,6 +216,7 @@ def val_loss(model, step, files, ds, dev, n=24):
         return float("nan"), float("nan")
     model.eval()
     rng = torch.get_rng_state(), torch.cuda.get_rng_state(), random.getstate()
+    p_act, step.action_noisy_cond_p = step.action_noisy_cond_p, 0.0     # validation as in every earlier run
     vl, al = [], []
     for k, f in enumerate(files[:n]):
         torch.manual_seed(1000 + k)
@@ -228,6 +232,7 @@ def val_loss(model, step, files, ds, dev, n=24):
     torch.set_rng_state(rng[0])
     torch.cuda.set_rng_state(rng[1])
     random.setstate(rng[2])
+    step.action_noisy_cond_p = p_act
     model.train()
     return float(np.mean(vl)), float(np.mean(al)) if al else float("nan")
 
@@ -247,6 +252,8 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--action-noisy-cond-p", type=float, default=0.0, help="P(the action history is noised in a "
+                    "training sample), as noisy_cond_prob 0.5 for the video history; 0 = the official recipe")
     ap.add_argument("--fp8", action="store_true", help="the frozen base matmuls in fp8 (torchao); speed, not memory")
     ap.add_argument("--optim", choices=["adamw", "adamw8bit"], default="adamw",
                     help="adamw8bit: bitsandbytes AdamW8bit, ~6 bytes less per trainable parameter (2 GB at rank 128)")
@@ -333,7 +340,7 @@ def main():
     else:
         opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / 50))
-    step = Step(dev, a.full_window_p)
+    step = Step(dev, a.full_window_p, a.action_noisy_cond_p)
     model.train()
 
     def sample():
