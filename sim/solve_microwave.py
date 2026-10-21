@@ -581,7 +581,7 @@ class Solver:
                     short = M.world_to_mw(arm.tcp().p)
                     up = arm.path([g(short + [0, 0, dz]) for dz in np.arange(0.01, 0.0301, 0.01)], arm.q_cmd)
                     ok = ok and step("lift on nothing (miss)", len(up) == 3 and arm.execute(up, settle=4))
-                    ok = ok and step("pot still down", float(u.pot_in_mw()[0, 2].cpu()) < p[2] + 0.01)
+                    ok = ok and step("pot still down", float(u.pot_in_mw()[0, 2].cpu()) < float(p[2]) + 0.01)
                     arm.gripper(OPEN, n=30)
                     ok = ok and step("down, retry", arm.execute(up[::-1][1:] + [qs[k[1] - m - 1]]))
                     ok = ok and step("reach, grasp", arm.execute(qs[k[1] - m:k[1]]))
