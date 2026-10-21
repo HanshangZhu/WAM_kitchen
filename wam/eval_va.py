@@ -37,14 +37,14 @@ def pot_starts(n, seed=1):
     return [rng.uniform(pots.min(0), pots.max(0)).round(4).tolist() for _ in range(n)]
 
 
-def make_config(meta, guidance, save_root):
+def make_config(meta, guidance, save_root, chunk=4):
     from easydict import EasyDict
     from configs import VA_CONFIGS
     c = EasyDict(VA_CONFIGS["demo"])
     c.wan22_pretrained_model_name_or_path = LB.base_dir()
     c.height, c.width = H, W + (WRIST_SIDE if meta.get("wrist") else 0)    # + the hand camera, right of the front
     c.obs_cam_keys = [CAM_KEY]
-    c.action_dim, c.action_per_frame, c.frame_chunk_size = 30, 8, 4
+    c.action_dim, c.action_per_frame, c.frame_chunk_size = 30, 8, chunk
     slots = meta.get("slots", list(range(8)))         # LB.LAYOUTS; the first runs: 0..7
     c.used_action_channel_ids = slots
     inv = [len(slots)] * 30
@@ -58,6 +58,7 @@ def make_config(meta, guidance, save_root):
     c.snr_shift, c.action_snr_shift = 5.0, 1.0
     c.guidance_scale, c.action_guidance_scale = guidance, 1
     c.attn_window = int(os.environ.get("VA_ATTN_WINDOW", c.attn_window))   # KV cache: attn_window // 2 chunks
+    c.attn_window = c.attn_window * 4 // chunk         # smaller chunks: as many latent frames of history as with 4
     c.enable_offload = os.environ.get("VA_OFFLOAD", "1") == "1"   # T5 on the CPU (the VAE is moved back to
                                        # the GPU below); VA_OFFLOAD=0 keeps T5 on the GPU (Spark: unified memory)
     c.rank = c.local_rank = 0
@@ -101,6 +102,9 @@ def main():
                     "where the hand goes); the joints themselves where the IK does not converge near them. "
                     "(ManiSkill's pd_ee_pose, IK from the current arm, cannot follow the demos' reconfigurations: "
                     "replaying a demo with it, the hand is 5 cm off from the first wrist turn on.)")
+    ap.add_argument("--chunk", type=int, choices=[1, 2, 3, 4], default=4,
+                    help="latent frames per query, 8 actions each: the actions executed open-loop before the next "
+                    "frames are seen (4 = 32 steps, as LingBot-VA's own loop). Training samples chunks of 1..4.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
@@ -137,7 +141,7 @@ def main():
     from sim.gs_client import SplatRenderer, composite
 
     S.init_logger()
-    m = S.VA_Server(make_config(meta, a.guidance, os.path.join(a.out, "_server")))
+    m = S.VA_Server(make_config(meta, a.guidance, os.path.join(a.out, "_server"), a.chunk))
     m.vae = m.vae.to(m.device)
     m.streaming_vae = WanVAEStreamingWrapper(m.vae)
     from diffusers.video_processor import VideoProcessor
@@ -210,7 +214,7 @@ def main():
         ok = bool(info.get("success", [False])[0])
         r = dict(episode=ep, pot=pots[ep], steps=t, success=ok, stop=stop, door_max_deg=round(door_max, 1),
                  pot_zmax_cm=round(pot_zmax * 100, 1), pot_ever_inside=ever_inside, wall_s=round(time.time() - t0),
-                 chunks=len(lat), camera=a.camera, splat=R is not None, exec=a.exec,
+                 chunks=len(lat), camera=a.camera, splat=R is not None, exec=a.exec, chunk=a.chunk,
                  ik_used=round(ik_stats["used"] / max(ik_stats["steps"], 1), 3))
         ik_stats.update(steps=0, used=0)
         print(json.dumps(r), flush=True)
