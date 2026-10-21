@@ -126,11 +126,12 @@ def trainable_state(model):
 
 # ---- LingBot-VA's training step (wan_va/train.py Trainer, unchanged logic) -----------------
 class Step:
-    def __init__(self, dev, full_window_p=0.0, action_noisy_cond_p=0.0):
+    def __init__(self, dev, full_window_p=0.0, action_noisy_cond_p=0.0, chunk_max=4):
         self.device = dev
         # P(the clean action history is noised, s 0.5-1, as LingBot-VA does for the video history at 0.5): the
         # official recipe leaves it 0, which lets the next actions be extrapolated from the past ones (copycat)
         self.action_noisy_cond_p = action_noisy_cond_p
+        self.chunk_max = chunk_max
         self.full_window_p = full_window_p          # P(attention over the whole sample) instead of the 4..64 window
         self.patch_size = PATCH
         self.gradient_accumulation_steps = 1
@@ -179,7 +180,7 @@ class Step:
         action_dict["text_emb"] = b["text_emb"]
         action_dict["actions_mask"] = b["actions_mask"]
         return {"latent_dict": latent_dict, "action_dict": action_dict,
-                "chunk_size": chunk_size or torch.randint(1, 5, (1,)).item(),
+                "chunk_size": chunk_size or torch.randint(1, self.chunk_max + 1, (1,)).item(),
                 "window_size": window_size or (100000 if random.random() < self.full_window_p
                                                else torch.randint(4, 65, (1,)).item())}
 
@@ -252,6 +253,9 @@ def main():
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument("--chunk-max", type=int, default=4, choices=[1, 2, 3, 4],
+                    help="latent frames per chunk are drawn from 1..chunk-max (LingBot-VA: 1..4); smaller puts more "
+                    "of the training on the short chunks a reactive closed loop (eval_va --chunk 1) uses")
     ap.add_argument("--action-noisy-cond-p", type=float, default=0.0, help="P(the action history is noised in a "
                     "training sample), as noisy_cond_prob 0.5 for the video history; 0 = the official recipe")
     ap.add_argument("--fp8", action="store_true", help="the frozen base matmuls in fp8 (torchao); speed, not memory")
@@ -340,7 +344,7 @@ def main():
     else:
         opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / 50))
-    step = Step(dev, a.full_window_p, a.action_noisy_cond_p)
+    step = Step(dev, a.full_window_p, a.action_noisy_cond_p, a.chunk_max)
     model.train()
 
     def sample():
