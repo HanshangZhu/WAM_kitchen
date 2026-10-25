@@ -252,6 +252,8 @@ def main():
     ap.add_argument("--steps", type=int, default=3000, help="optimiser steps")
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--lr-end", type=float, help="the learning rate falls linearly from --lr to this over the run's "
+                    "updates (after the 50-step warmup); default: constant --lr")
     ap.add_argument("--rank", type=int, default=32)
     ap.add_argument("--chunk-max", type=int, default=4, choices=[1, 2, 3, 4],
                     help="latent frames per chunk are drawn from 1..chunk-max (LingBot-VA: 1..4); smaller puts more "
@@ -343,7 +345,10 @@ def main():
         opt = bnb.optim.AdamW8bit(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
     else:
         opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.95), weight_decay=0.0)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / 50))
+    n_upd = max(a.steps - a.start_step - 1, 1)                  # update k = s - start_step runs 0 .. n_upd
+    end = 1.0 if a.lr_end is None else a.lr_end / a.lr
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda k: min(1.0, (k + 1) / 50) * (1 - (1 - end) * min(k, n_upd) / n_upd))
     step = Step(dev, a.full_window_p, a.action_noisy_cond_p, a.chunk_max)
     model.train()
 
@@ -374,11 +379,12 @@ def main():
             lv.append(ll.item())
             la.append(al.item())
         gn = torch.nn.utils.clip_grad_norm_(params, 2.0)
+        lr = opt.param_groups[0]["lr"]
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
         if s % 10 == 0:
-            rec = dict(step=s, video=float(np.mean(lv)), action=float(np.mean(la)), grad=float(gn),
+            rec = dict(step=s, video=float(np.mean(lv)), action=float(np.mean(la)), grad=float(gn), lr=lr,
                        s_per_step=round((time.time() - t0) / (s - a.start_step + 1), 2), mem_gb=round(torch.cuda.max_memory_allocated() / 2**30, 1))
             print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + "\n")
