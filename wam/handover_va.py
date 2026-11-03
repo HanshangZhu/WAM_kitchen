@@ -45,11 +45,14 @@ def main():
     ap.add_argument("--episodes", type=int, default=24)
     ap.add_argument("--first", type=int, default=8)
     ap.add_argument("--max-steps", type=int, default=1500)
+    ap.add_argument("--budget", type=int, help="rescue: steps after the hand-over (default: --max-steps in all), so a "
+                    "late hand-over is not cut short")
     ap.add_argument("--chunk", type=int, choices=[1, 2, 3, 4], default=4)
     ap.add_argument("--near-xy", type=float, default=0.10, help="m, tcp to pot, horizontal, at the closing step")
     ap.add_argument("--near-z", type=float, default=0.15, help="m, tcp above the pot's origin at most")
     ap.add_argument("--check", type=int, default=32, help="steps after the closing step")
-    ap.add_argument("--lift", type=float, default=0.02, help="m the pot must have risen by then")
+    ap.add_argument("--lift", type=float, default=0.05, help="m the pot must have risen by then (a held pot is "
+                    "up ~20 cm by then; a missed one 0-3 cm, nudged)")
     ap.add_argument("--camera", default="take_030")
     ap.add_argument("--guidance", type=float, default=5.0)
     ap.add_argument("--out", required=True)
@@ -145,7 +148,11 @@ def main():
             handover_t, handover_frame, check_state = t, len(seen) - 1, state()
             replay = []
         ci = 0
-        while t < a.max_steps:
+
+        def cap():
+            return handover_t + a.budget if a.budget and handover_t is not None else a.max_steps
+
+        while t < cap():
             action, latents = m._infer({"obs": [{CAM_KEY: seen[-1]}]}, frame_st_id=m.frame_st_id)
             lat.append(latents)
             keys = []
@@ -214,7 +221,8 @@ def main():
         r = dict(episode=ep, pot=pots[ep], steps=t, success=ok, stop=stop, door_max_deg=round(door_max, 1),
                  pot_zmax_cm=round(pot_zmax * 100, 1), pot_ever_inside=ever_inside, handover_step=handover_t,
                  handover_frame=handover_frame, attempt=attempt, chunks=len(lat), exec="ee_ik", chunk=a.chunk,
-                 lora=a.lora, fresh=a.fresh if a.mode == "rescue" else None)
+                 lora=a.lora, fresh=a.fresh if a.mode == "rescue" else None, cap=cap(),
+                 success_by_max_steps=ok and t <= a.max_steps)
         if a.mode == "rescue":
             r["replay_exact"] = check_state == rec["state"]
             if not r["replay_exact"]:
