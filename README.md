@@ -48,11 +48,12 @@ Starts 0..7 picked checkpoints; starts 8..79 never did.
 **Model.** `lingbot-va-base` with LoRA rank 128, the pre-training action layout (end-effector pose,
 joints, gripper), attention over the whole episode in half of the samples. Data: 260 solver
 demonstrations (7 held out for validation) -- whole task (59, plus 20 with DART noise), starts in
-the middle of the task (76), recovery from a failed place (46) and from a missed door handle (59). **Noise on the action
-history**: in half of the training samples the past actions the model attends to are heavily
-noised, as LingBot-VA's recipe already does for the past video (`train_va.py
---action-noisy-cond-p 0.5`). 14000 steps at lr 1e-4, then continued to 20000 with the lr falling
-linearly to 1e-5. 59 h on one RTX 5090.
+the middle of the task (76), recovery from a failed place (46) and from a missed door handle (59).
+**Noise on the action history**: in half of
+the training samples the past actions the model attends to are mixed with Gaussian noise, at a
+level drawn per frame between 0 and 50 % (25 % on average), as LingBot-VA's recipe already does,
+more strongly, for the past video (`train_va.py --action-noisy-cond-p 0.5`). 14000 steps at lr
+1e-4, then continued to 20000 with the lr falling linearly to 1e-5. 59 h on one RTX 5090.
 
 | model (one machine, the same starts for every row) | starts 8..31 | starts 32..79 | all 72 held-out starts |
 |---|---|---|---|
@@ -68,10 +69,13 @@ What the comparisons show (paired by start, exact McNemar):
 
 - **The action-history noise is what made the policy work**: 16/24 with it, 5/24 without, everything
   else identical (13 starts solved only with it, 2 only without; p = 0.007). Without it 18 of the 19
-  failures are missed pot grasps while the door, which never moves, is still opened. An earlier
-  diagnostic (`reliance_va.py`) found the predicted motion 2-2.8x more sensitive to the action
-  history than to the video in an early model trained without the noise: it continues its own
-  trajectory instead of looking where the pot is.
+  failures are missed pot grasps while the door, which never moves, is still opened. Swapping
+  what the model has in its context on held-out demonstrations (`reliance_va.py`) shows why: without
+  the noise, replacing the past actions moves the predicted arm motion 2-3x more than replacing the
+  past video (21-35 cm vs 8-10 cm); with the noise the two are about equal (15-26 vs 17-21 cm). The
+  model without it continues its own trajectory instead of looking where the pot is -- the
+  "copycat" failure of imitation from histories (de Haan et al. 2019; Wen et al. 2020), and the
+  same remedy as ChauffeurNet's past-motion dropout (Bansal et al. 2019, also in half the samples).
 - **Longer training with a falling lr** took the same recipe from 76 % to 99 % (17 starts gained,
   1 lost; p = 0.0001). Steps and lr schedule changed together.
 - **The ego video did not help here**: 11/24 with it against 16/24 without (p = 0.27), one run with
