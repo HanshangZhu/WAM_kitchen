@@ -65,6 +65,13 @@ more strongly, for the past video (`train_va.py --action-noisy-cond-p 0.5`). 140
 
 Before these: zero-shot 0/21; the first post-trained models 0-1 of 8.
 
+![start 25: no noise vs action-history noise](wam/media/noise_vs_no_noise_start25.gif)
+
+*Start 25, the same data and settings without and with the action-history noise (rule-picked checkpoints, 8000 vs 12000
+steps). Each column shows the camera above the model's imagination, at 2× speed. Without the noise the arm never grasps
+the pot and goes on to close the door. More GIFs are in `wam/EXPERIMENTS.md`: the hand-over rescue and the planned door
+miss.*
+
 What the comparisons show (paired by start, exact McNemar):
 
 - **The action-history noise is what made the policy work**: 16/24 with it, 5/24 without, everything

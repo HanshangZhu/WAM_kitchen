@@ -301,6 +301,12 @@ Re-seeding alone moves it 0.7-2.5 cm.
     camera shows it still on the counter, and it goes on to close the door.
   - The noise models place the pot, with imagined and seen frames agreeing.
 
+Start 25 with and without the noise. Each column shows the camera above the model's imagination, at 2× speed. On the
+left is the no-noise control at 8000 steps; on the right is the noise model at 12000 steps, the checkpoints picked by
+the rule for the same data and settings.
+
+![start 25: no noise vs action-history noise](media/noise_vs_no_noise_start25.gif)
+
 ## 16. Hand-over rescue (`handover_va.py`)
 
 **Question:** can the final model rescue an episode in which the no-noise model's grasp failed?
@@ -367,6 +373,11 @@ Doors that open at the first pull are open by about 5 s.
 - **Proxy and limits:** "door shut at 6.2 s" was checked frame by frame for three starts only; one machine.
 - **Literature:** `literature/recovery_without_imitating_failures.md` covers how other work teaches recovery without
   supervising the failure.
+
+The final model on start 8, with the planned miss, and start 9, where the first pull opens the door; 1× speed. At
+about 6 s the door on start 8 is still shut in the camera and in the imagination alike.
+
+![planned door miss](media/planned_door_miss_start8_vs_9.gif)
 
 ## 18. Forgetting: the held-out human-video loss
 
