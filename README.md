@@ -97,6 +97,10 @@ separately, anything outside this task, scene and camera.
   `reliance_va.py` and `head_consistency_va.py` are diagnostics (imagined video from a start or a
   demonstration prefix; action error with the true history; how much the actions follow the action
   history vs the video; agreement of the pose and joint outputs).
+- `wam/EXPERIMENTS.md` -- the log of the LingBot-VA work: setup, every run by what it changed, results with their
+  tests, what did not work, limitations. `wam/NEXT_STEPS.md` -- the experiments still to run, what each answers and its
+  cost in GPU-hours. `wam/literature/` -- notes on noise on the action history, teaching recovery without imitating
+  failures, forgetting, and regularising toward the base model.
 - `sim/`, `assets/`, `recon/gs_server.py`, `recon/gs_kitchen.py` -- the twin, the scripted solver
   and demonstration generator, and the splat renderer, copied from the first repository on
   18 October 2026 and developed here since (the solver's `--smooth`, `--miss-back`, `--speed`).
