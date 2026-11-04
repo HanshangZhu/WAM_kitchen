@@ -4,7 +4,5 @@ __pycache__/
 *.pyc
 # local rollouts / videos
 outputs/
-# notes for the coding assistant: local only
-CLAUDE.md
 # research-state ledger: local only
 .cvpr/
