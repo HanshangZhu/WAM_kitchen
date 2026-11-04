@@ -324,7 +324,18 @@ Re-seeding alone moves it 0.7-2.5 cm.
   completed-looking grasp, it goes on to the next phase (closing the door).
 - **Among the re-grasps that did not succeed,** one (start 27) put the pot inside but tilted (it fails the flat-placement
   check), and the door was not shut in time.
-- **Caveat:** neither model was trained on recovering from a missed pot grasp.
+- **Caveat:** neither model was trained on recovering from a missed pot grasp. Both were trained on states the
+  rescues pass through after the re-grasp, and what the empty-cache model does there matches those demonstrations:
+  - the failed-place recovery (46 demos): the pot half on the cavity's front edge, grasped from the front and slid in,
+    then tuck and shut. Start 27 does exactly this.
+  - mid-task "lip" starts: the door open and the pot on the counter 15-20 cm in front of the opening, then grasped and
+    placed. Start 13's two grasps near the opening match these.
+- **Start 13 combines these in an order no demonstration has.** After its second failed grasp it tucks, shuts the door
+  with the pot still outside (no demonstration shuts the door before the pot is in), then reaches for the handle to
+  reopen it. Door shut with the pot outside is the task's own start state.
+  - Read as re-entering the task from the current frame, not as planning: the first step (shutting the door) is an
+    error a plan would not make.
+  - Showing emergence would take states that no demonstration contains.
 
 ## 17. Planned door misses
 
