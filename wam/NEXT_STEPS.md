@@ -39,6 +39,26 @@ information per GPU-hour.
 | **Replay matched on 20000 robot updates:** 25 % ego video first (the strong-shift reference value), later 5 / 15 / 30 % | ~78 h for 25 %; ~213 h for the other three | Replay's cost and benefit without the step confound of section 11 |
 | **Distillation to the LoRA-off model on human clips only,** video velocity only, β ∈ {0.3, 1, 3}, alone and with replay | about the replay run's cost + ~10 % | Does an anchor to the base work without replay, or with it? It is a W2-type surrogate, not a KL (literature/kl_to_base.md) |
 
+## C. Further ablations
+
+These follow from the findings in `EXPERIMENTS.md`. Training runs go from base for 14000 steps and are read on all 72
+starts against the noise model at the same step.
+
+| experiment | cost | answers |
+|---|---|---|
+| **Context window at inference:** attend to the last K chunks only, K ∈ {1, 4, 16, all}; on starts 8..31 and the 17 hand-overs that inherit the history | ~2 h, plus code | How much of the 71/72 needs the whole episode? Does a short window let a model recover when it inherits a failed history (0/17 now; section 16)? |
+| **Reset the cache when a grasp fails** (the pot is < 5 cm up 32 steps after the gripper closed), all 72 starts, no-noise model and final model | ~1.5 h, plus code | The deployable form of the empty-cache rescue: do the 10/17 re-grasps turn into a higher success rate? |
+| **Classifier-free guidance** ∈ {1, 3, 5 (used), 8}, final model, starts 8..31 | ~1 h | Does guidance matter for a single-task policy? Guidance 1 also halves the compute per query |
+| **Random history truncation in training** (each sample's context starts at a random chunk), with the action-history noise | ~41 h, plus code | Recovery from an inherited failed history, and fewer planned door misses (cutting the failure prefix, as in the recovery literature) |
+| **Without the handle-miss retry demos** | ~41 h | Do the planned door misses disappear, and what does it cost? |
+| **Final recipe + wrist camera** (the wrist was only tried without the noise) | ~50 h, plus rendering | Does the wrist view help once the policy looks at the video? |
+| **LoRA rank 32 instead of 128** | ~41 h | Task vs forgetting: lower rank is reported to forget less (`literature/forgetting.md`) |
+| **The action-history noise without LingBot-VA's video-history noise** | ~41 h, plus a switch | Is the recipe's own video noise needed too? |
+| **Demo-count curve:** 25 % and 50 % of the data, same mix | ~82 h | Sample efficiency |
+
+The three inference-only rows belong in the first block of the order below. The training rows compete for the
+multi-day slot.
+
 ## Order
 
 1. **The evaluation-only block (A),** plus the recovery test: about 5 h.
