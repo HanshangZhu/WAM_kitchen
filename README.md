@@ -1,4 +1,4 @@
-# V-JEPA kitchen
+# WAM kitchen
 
 The continuation of [microwave-from-human-video](https://github.com/HanshangZhu/microwave-from-human-video):
 the human video trains the world model; the digital twin only examines it.
