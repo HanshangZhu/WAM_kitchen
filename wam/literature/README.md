@@ -9,6 +9,7 @@ to this setup and with experiments, ordered by compute.
 | `recovery_without_imitating_failures.md` | How do others teach retrying without the policy learning to fail on purpose? |
 | `forgetting.md` | How can the task be learned without forgetting the video prior (2025-26 consensus)? |
 | `kl_to_base.md` | What does "KL to the base" mean for diffusion and flow models, and does a distillation term toward the base help? |
+| `human_ego_transfer.md` | When does human egocentric video turn into robot actions: at scale without alignment (PI, Dyna-2), or from minutes with explicit alignment (HumanEgo)? And what SuperMimic does and does not show |
 
 **How to read the citations.** Citations give the venue and the arXiv id, and numbers were read in the papers' text.
 The markers say where that was not possible:
