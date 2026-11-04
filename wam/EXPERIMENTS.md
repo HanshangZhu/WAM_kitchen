@@ -3,7 +3,7 @@
 Everything about post-training LingBot-VA on the twin's solver demonstrations, 18 October to 4 November 2026: one
 section per question, roughly in the order they were asked. The README's "Results (step 2a)" is the short version;
 this file holds the runs behind it, the numbers, the tests and what did not work. Runs are named by what changed.
-Checkpoints, rollouts and videos are not in the repository (videos are available on request).
+Checkpoints and rollouts are not in the repository; a few GIFs are in `media/`, and full videos are available on request.
 
 ## Summary
 
@@ -336,6 +336,13 @@ Re-seeding alone moves it 0.7-2.5 cm.
   - Read as re-entering the task from the current frame, not as planning: the first step (shutting the door) is an
     error a plan would not make.
   - Showing emergence would take states that no demonstration contains.
+
+The final model after taking over with an empty cache. In each GIF the top row is what the camera sees and the bottom row
+is what the model imagines.
+
+| start 19: re-grasp, success (1.5×) | start 27: slides the pot in, as in the failed-place demos (1.5×) | start 13: shuts the door with the pot outside, then reaches to reopen (2×) |
+|---|---|---|
+| ![start 19](media/rescue_start19_regrasp_success.gif) | ![start 27](media/rescue_start27_slide_in.gif) | ![start 13](media/rescue_start13_shut_then_reopen.gif) |
 
 ## 17. Planned door misses
 
